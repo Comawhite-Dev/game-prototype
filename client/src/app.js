@@ -18,9 +18,25 @@ window.CONFIGURATION = {
 	CHARACTER			: {
 		MOVE 		: {
 			HISTORY_LIMIT	: 50,
-			SPEED			: 4,
+			SPEED			: 80,
 			FPS				: 4
 		}
+	}
+};
+
+window.COMMANDS = {
+	MOVE	: {
+		UP		: 0x01,
+		DOWN	: 0x02,
+		LEFT	: 0x03,
+		RIGHT	: 0x04
+	},
+
+	STANDS	: {
+		UP		: 0x05,
+		DOWN	: 0x06,
+		LEFT	: 0x07,
+		RIGHT	: 0x08
 	}
 };
 
@@ -48,15 +64,13 @@ var Shortcut = Marionette.Object.extend({
 });
 
 var Logger = {
-	log : function (obj, message) {
-		if (window["console"] != null) {
-			if (obj.debug) console.log("[" + obj.name + "] " + message);
-		}
-	},
-
-	obj : function (obj, message) {
-		if (window["console"] != null) {
-			if (obj.debug) console.log("[" + obj.name + "] object :") & console.log(message);
+	log : function (obj, message, object) {
+		if (window["console"] != null && obj.debug) {
+			if (object) {
+				console.log("[" + obj.name + "] " + message, object);
+			} else {
+				console.log("[" + obj.name + "] " + message);
+			}
 		}
 	}
 };
@@ -159,25 +173,77 @@ var CharacterDirection = Marionette.Object.extend({
 	}
 });
 
+/*
+ * Handle network time synchronization and average the current lag
+ */
+var NetworkSynchronization = Marionette.Object.extend({
+	srv_time_offset	: 0,
+	avg_lag			: 0,
+	ping_sample		: _([]),
+
+	ping_sample_struct	: {
+		id				: 0,
+		srv_time		: 0,
+		sent_time		: 0,
+		received_time	: 0,
+		confirmed		: false
+	},
+
+	updateSample	: function (sample) {
+		this.ping_sample.push(sample);
+		while (this.ping_sample.where({ confirmed : true }).size() > 5) {
+			this.ping_sample.shift();
+		}
+		this.checkAvgLag();
+	},
+
+	getServerTime : function () {
+		return _.now() + this.avg_lag / 2 + this.srv_time_offset;
+	},
+
+	newSample : function () {
+		var sample = _.defaults({ id : _.uniqueId(), sent_time : _.now() }, this.ping_sample_struct);
+		this.ping_sample.add(sample);
+		return sample;
+	},
+
+	checkAvgLag : function () {
+		//the samples on which we want to average the latency
+		var samples = this.ping_sample.where({ confirmed : true });
+		samples.filter(function (obj) {
+			return obj.received_time - obj.sent_time < this.avg_lag * 3;
+		}, this);
+
+		var sum = 0;
+		for (var i = 0, l = samples.size(); i < l; i++) {
+			var obj = samples[i];
+			sum += parseInt(obj.received_time, 10) - parseInt(obj.sent_time, 10);
+		}
+		this.avg_lag = Math.round(sum / l / 2);
+	}
+});
+
 var CharacterMoveXY = Marionette.Object.extend({
 	x			: 0,
 	y			: 0,
+	command		: null,
 	timestamp	: 0,
 
 	initialize : function (x, y, timestamp) {
 		this.x = x;
 		this.y = y;
-		this.timestamp = timestamp;
+		this.timestamp = Date.now();
 	}
 });
 
 /*
  * 
  */
-var CharacterMoveHistory = Marionette.Object.extend({
+var CharacterCommandsHistory = Marionette.Object.extend({
 	moves			: [],
 
 	initialize : function () {
+
 	},
 
 	add : function (char_move_xy) {
@@ -224,13 +290,14 @@ var Character = BaseUnit.extend({
 			key		: Phaser.Keyboard.F
 		},
 	},
-	she				: null,
-	move_history	: null,
+	she					: null,
+	commands_history	: null,
+	move_direction		: null,
 
 	initialize : function () {
 		BaseUnit.prototype.initialize.apply(this);
 		this.name = "Character";
-		this.move_history = new CharacterMoveHistory();
+		this.commands_history = new CharacterCommandsHistory();
 
 		this.vent.on(EVENTS.GAME_PRELOAD, _.bind(this.preload, this));
 		this.vent.on(EVENTS.GAME_CREATE, _.bind(this.create, this));
@@ -279,14 +346,16 @@ var Character = BaseUnit.extend({
 		for (var index in this.controls) {
 			var shortcut = this.controls[index];
 			shortcut.obj = this.engine.input.keyboard.addKey(shortcut.key);
+			shortcut.obj.onDown.add(this.move, this);
+			shortcut.obj.onUp.add(this.stands, this);
 		}
 	},
 
 	move : function (params) {
-		switch (params.move) {
+		Logger.log(this, "params", params);
+		/*switch (params.move) {
 			case "top" :
 				this.she.animations.play("walks-top");
-
 			break;
 
 			case "right" :
@@ -302,11 +371,12 @@ var Character = BaseUnit.extend({
 			break;
 		}
 
-		this.last_direction = params.move;
+		this.last_direction = params.move;*/
 	},
 
 	stands : function (params) {
-		switch (params.move) {
+		Logger.log(this, "params", params);
+		/*switch (params.move) {
 			case "top" :
 				this.she.animations.play("stands-top");
 			break;
@@ -322,7 +392,7 @@ var Character = BaseUnit.extend({
 			case "left" :
 				this.she.animations.play("stands-left");
 			break;
-		}
+		}*/
 	},
 
 	update : function () {
