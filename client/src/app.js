@@ -16,10 +16,26 @@ window.CONFIGURATION = {
 	},
 
 	CHARACTER			: {
-		MOVE 		: {
+		MOVE			: {
 			HISTORY_LIMIT	: 50,
-			SPEED			: 80,
-			FPS				: 4
+			SPEED			: 200,
+			FPS				: 4,
+			TOP_LABEL		: "top",
+			RIGHT_LABEL		: "right",
+			BOTTOM_LABEL	: "bottom",
+			LEFT_LABEL		: "left"
+		},
+		ANGLE_45D_MULTIPLIER	: .7071,
+		DIRECTION		: {
+			NONE			: "",
+			TOP				: "t",
+			TOP_RIGHT		: "tr",
+			RIGHT			: "r",
+			RIGHT_BOTTOM	: "rb",
+			BOTTOM			: "b",
+			BOTTOM_LEFT		: "bl",
+			LEFT			: "l",
+			TOP_LEFT		: "tl"
 		}
 	}
 };
@@ -37,6 +53,12 @@ window.COMMANDS = {
 		DOWN	: 0x06,
 		LEFT	: 0x07,
 		RIGHT	: 0x08
+	}
+};
+
+window.REQUESTS = {
+	CLOCK	: {
+		TICK_OFFSET : 0x01
 	}
 };
 
@@ -153,23 +175,98 @@ var BaseUnit = SmartController.extend({
 });
 
 var CharacterDirection = Marionette.Object.extend({
-	direction	: null,
-	left		: false,
-	top			: false,
-	right		: false,
-	bottom		: false,
+	direction	: CONFIGURATION.CHARACTER.DIRECTION.NONE,
+
+	left		: {
+		active	: false,
+		pushed	: false
+	},
+	top			: {
+		active	: false,
+		pushed	: false
+	},
+	right		: {
+		active	: false,
+		pushed	: false
+	},
+	bottom		: {
+		active	: false,
+		pushed	: false
+	},
 
 	initialize : function () {
 	},
 
 	set : function (dir) {
-		if (this[dir] == null) return;
+		switch (dir) {
+			case CONFIGURATION.CHARACTER.MOVE.LEFT_LABEL :
+				this.left.active = this.left.pushed = true;
+				this.right.active = false;
+			break;
 
-		this[dir] = true;
+			case CONFIGURATION.CHARACTER.MOVE.RIGHT_LABEL :
+				this.right.active = this.right.pushed = true;
+				this.left.active = false;
+			break;
+
+			case CONFIGURATION.CHARACTER.MOVE.TOP_LABEL :
+				this.top.active = this.top.pushed = true;
+				this.bottom.active = false;
+			break;
+
+			case CONFIGURATION.CHARACTER.MOVE.BOTTOM_LABEL :
+				this.bottom.active = this.bottom.pushed = true;
+				this.top.active = false;
+			break;
+
+			default :
+				return;
+			break;
+		}
+
+		this.updateDirection();
 	},
 
 	unset : function (dir) {
+		switch (dir) {
+			case CONFIGURATION.CHARACTER.MOVE.LEFT_LABEL :
+				this.left.active = this.left.pushed = false;
+				if (this.right.pushed) this.right.active = true;
+			break;
 
+			case CONFIGURATION.CHARACTER.MOVE.RIGHT_LABEL :
+				this.right.active = this.right.pushed = false;
+				if (this.left.pushed) this.left.active = true;
+			break;
+
+			case CONFIGURATION.CHARACTER.MOVE.TOP_LABEL :
+				this.top.active = this.top.pushed = false;
+				if (this.bottom.pushed) this.bottom.active = true;
+			break;
+
+			case CONFIGURATION.CHARACTER.MOVE.BOTTOM_LABEL :
+				this.bottom.active = this.bottom.pushed = false;
+				if (this.top.pushed) this.top.active = true;
+			break;
+
+			default :
+				return;
+			break;
+		}
+
+		this.updateDirection();
+	},
+
+	getDirection : function () {
+		return this.direction;
+	},
+
+	updateDirection : function () {
+		this.direction = CONFIGURATION.CHARACTER.DIRECTION.NONE;
+		if (this.top.active) this.direction += CONFIGURATION.CHARACTER.DIRECTION.TOP;
+		if (this.right.active) this.direction += CONFIGURATION.CHARACTER.DIRECTION.RIGHT;
+		if (this.bottom.active) this.direction += CONFIGURATION.CHARACTER.DIRECTION.BOTTOM;
+		if (this.left.active) this.direction += CONFIGURATION.CHARACTER.DIRECTION.LEFT;
 	}
 });
 
@@ -267,45 +364,89 @@ var CharacterCommandsHistory = Marionette.Object.extend({
 	}
 });
 
+var Clock = SmartController.extend({
+	current_tick				: 0,
+	current_tick_offset 		: 0,
+	current_tick_offset_seconds	: 0,
+	last_render_tick			: 0,
+
+	initialize : function () {
+		SmartController.prototype.initialize.apply(this, ["Clock"]);
+
+		this.vent.on(EVENTS.GAME_CREATE, _.bind(this.create, this));
+		this.vent.on(EVENTS.GAME_UPDATE, _.bind(this.update, this));
+
+		this.reqres.setHandler(REQUESTS.CLOCK.TICK_OFFSET, _.bind(this.requestTickOffset, this));
+	},
+
+	create : function () {
+		// initialize game ticks
+		this.last_render = this.current_tick = Date.now();
+	},
+
+	update : function () {
+		this.last_render_tick = this.current;
+		this.current = Date.now();
+		this.current_tick_offset = this.current - this.last_render_tick;
+		this.current_tick_offset_seconds = this.current_tick_offset * .001;
+	},
+
+	requestTickOffset : function() {
+		return this.current_tick_offset_seconds;
+	},
+
+	getCurrentTickOffset : function () {
+		return this.current_tick_offset;
+	},
+
+	getCurrentTickOffsetSeconds : function () {
+		return this.current_tick_offset_seconds;
+	}
+});
+
 var Character = BaseUnit.extend({
 	controls	: {
 		top : {
-			label	: "top",
+			label	: CONFIGURATION.CHARACTER.MOVE.TOP_LABEL,
 			obj		: null,
 			key		: Phaser.Keyboard.E
 		},
 		bottom : {
-			label	: "bottom",
+			label	: CONFIGURATION.CHARACTER.MOVE.BOTTOM_LABEL,
 			obj		: null,
 			key		: Phaser.Keyboard.D
 		},
 		left : {
-			label	: "left",
+			label	: CONFIGURATION.CHARACTER.MOVE.LEFT_LABEL,
 			obj		: null,
 			key		: Phaser.Keyboard.S
 		},
 		right : {
-			label	: "right",
+			label	: CONFIGURATION.CHARACTER.MOVE.RIGHT_LABEL,
 			obj		: null,
 			key		: Phaser.Keyboard.F
-		},
+		}
 	},
 	she					: null,
 	commands_history	: null,
 	move_direction		: null,
+	char_direction		: null,
+	tick_offset			: 0,
 
 	initialize : function () {
 		BaseUnit.prototype.initialize.apply(this);
 		this.name = "Character";
 		this.commands_history = new CharacterCommandsHistory();
 
+		this.char_direction = new CharacterDirection();
+
 		this.vent.on(EVENTS.GAME_PRELOAD, _.bind(this.preload, this));
 		this.vent.on(EVENTS.GAME_CREATE, _.bind(this.create, this));
 		this.vent.on(EVENTS.GAME_UPDATE, _.bind(this.update, this));
 
 		/* Mouvements */
-		this.commands.setHandler(EVENTS.CHARACTER_MOVE, _.bind(this.move, this));
-		this.commands.setHandler(EVENTS.CHARACTER_STANDS, _.bind(this.stands, this));
+		// this.commands.setHandler(EVENTS.CHARACTER_MOVE, _.bind(this.move, this));
+		// this.commands.setHandler(EVENTS.CHARACTER_STANDS, _.bind(this.stands, this));
 
 		Logger.log(this, "Initialized!");
 	},
@@ -344,10 +485,24 @@ var Character = BaseUnit.extend({
 		// listen to key events
 		// this.controls = this.engine.input.keyboard.addKeyCapture(this.controls);
 		for (var index in this.controls) {
+			// Logger.log(this, "moveKeyListen", this.controls);
 			var shortcut = this.controls[index];
 			shortcut.obj = this.engine.input.keyboard.addKey(shortcut.key);
-			shortcut.obj.onDown.add(this.move, this);
-			shortcut.obj.onUp.add(this.stands, this);
+			shortcut.obj.onDown.add(this.moveKeyListen, this);
+			shortcut.obj.onUp.add(this.moveKeyListen, this);
+		}
+	},
+
+	moveKeyListen : function (e) {
+		for (var index in this.controls) {
+			var shortcut = this.controls[index];
+
+			if (e.keyCode != shortcut.key) continue;
+			if (shortcut.obj.isDown) {
+				this.char_direction.set(shortcut.label);
+			} else {
+				this.char_direction.unset(shortcut.label);
+			}
 		}
 	},
 
@@ -396,30 +551,54 @@ var Character = BaseUnit.extend({
 	},
 
 	update : function () {
-		for (var index in this.controls) {
-			var shortcut = this.controls[index];
+		var tick_offset_seconds = this.reqres.request(REQUESTS.CLOCK.TICK_OFFSET);
+		var move_offset = CONFIGURATION.CHARACTER.MOVE.SPEED * tick_offset_seconds;
+		var char_direction = this.char_direction.getDirection();
 
-			if (shortcut.obj.isDown) {
-				this.commands.execute(EVENTS.CHARACTER_MOVE, { move : shortcut.label });
+		if (char_direction != CONFIGURATION.CHARACTER.DIRECTION.NONE) {
+			switch (char_direction) {
+				case CONFIGURATION.CHARACTER.DIRECTION.TOP :
+					this.she.y -= move_offset;
+					this.she.animations.play("walks-top");
+				break;
 
-				switch (shortcut.label) {
-					case "top" :
-						this.she.y -= CONFIGURATION.CHARACTER.MOVE.SPEED;
-					break;
+				case CONFIGURATION.CHARACTER.DIRECTION.TOP_RIGHT :
+					this.she.y -= move_offset * CONFIGURATION.CHARACTER.ANGLE_45D_MULTIPLIER;
+					this.she.x += move_offset * CONFIGURATION.CHARACTER.ANGLE_45D_MULTIPLIER;
+				break;
 
-					case "right" :
-						this.she.x += CONFIGURATION.CHARACTER.MOVE.SPEED;
-					break;
+				case CONFIGURATION.CHARACTER.DIRECTION.RIGHT :
+					this.she.x += move_offset;
+					this.she.animations.play("walks-right");
+				break;
 
-					case "bottom" :
-						this.she.y += CONFIGURATION.CHARACTER.MOVE.SPEED;
-					break;
+				case CONFIGURATION.CHARACTER.DIRECTION.RIGHT_BOTTOM :
+					this.she.y += move_offset * CONFIGURATION.CHARACTER.ANGLE_45D_MULTIPLIER;
+					this.she.x += move_offset * CONFIGURATION.CHARACTER.ANGLE_45D_MULTIPLIER;
+				break;
 
-					case "left" :
-						this.she.x -= CONFIGURATION.CHARACTER.MOVE.SPEED;
-					break;
-				}
+				case CONFIGURATION.CHARACTER.DIRECTION.BOTTOM :
+					this.she.y += move_offset;
+					this.she.animations.play("walks-bottom");
+				break;
+
+				case CONFIGURATION.CHARACTER.DIRECTION.BOTTOM_LEFT :
+					this.she.y += move_offset * CONFIGURATION.CHARACTER.ANGLE_45D_MULTIPLIER;
+					this.she.x -= move_offset * CONFIGURATION.CHARACTER.ANGLE_45D_MULTIPLIER;
+				break;
+
+				case CONFIGURATION.CHARACTER.DIRECTION.LEFT :
+					this.she.x -= move_offset;
+					this.she.animations.play("walks-left");
+				break;
+
+				case CONFIGURATION.CHARACTER.DIRECTION.TOP_LEFT :
+					this.she.y -= move_offset * CONFIGURATION.CHARACTER.ANGLE_45D_MULTIPLIER;
+					this.she.x -= move_offset * CONFIGURATION.CHARACTER.ANGLE_45D_MULTIPLIER;
+				break;
 			}
+		} else {
+			this.she.animations.play("stands-bottom");
 		}
 	}
 });
@@ -444,22 +623,22 @@ var Ennemies = SmartController.extend({
 var Inputs = SmartController.extend({
 	controls	: {
 		top : {
-			label	: "top",
+			label	: CONFIGURATION.CHARACTER.MOVE.TOP_LABEL,
 			obj		: null,
 			key		: Phaser.Keyboard.E
 		},
 		bottom : {
-			label	: "bottom",
+			label	: CONFIGURATION.CHARACTER.MOVE.BOTTOM_LABEL,
 			obj		: null,
 			key		: Phaser.Keyboard.D
 		},
 		left : {
-			label	: "left",
+			label	: CONFIGURATION.CHARACTER.MOVE.LEFT_LABEL,
 			obj		: null,
 			key		: Phaser.Keyboard.S
 		},
 		right : {
-			label	: "right",
+			label	: CONFIGURATION.CHARACTER.MOVE.RIGHT_LABEL,
 			obj		: null,
 			key		: Phaser.Keyboard.F
 		},
@@ -523,10 +702,14 @@ var GameApp = Marionette.Application.extend({
 	gfx_interface	: null,
 	network			: null,
 	inputs			: null,
+	clock			: null,
 
 	initialize : function (options) {
 		/* Store options */
 		this.options = options;
+
+		/* Clock */
+		this.clock = new Clock();
 
 		/* GFXEngine */
 		this.gfx_engine = new GFXEngine();
@@ -543,6 +726,7 @@ var GameApp = Marionette.Application.extend({
 		/* Ennemies */
 		this.ennemies = new Ennemies();
 
+		/* Inputs */
 		this.inputs = new Inputs();
 
 		/* Initialize the game engine */
@@ -562,6 +746,7 @@ var GameApp = Marionette.Application.extend({
 
 	preload : function() {
 		this.vent.trigger(EVENTS.GAME_PRELOAD, {});
+		this.engine.time.advancedTiming = true;
 	},
 
 	create : function() {
@@ -574,5 +759,7 @@ var GameApp = Marionette.Application.extend({
 
 	render : function() {
 		this.vent.trigger(EVENTS.GAME_RENDER, {});
+
+		this.engine.debug.text(this.engine.time.fps || '--', 2, 14, "#00ff00");
 	}
 });
